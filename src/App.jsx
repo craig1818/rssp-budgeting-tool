@@ -44,12 +44,22 @@ const DEF_STUDY_ESS = [["Textbooks and stationery", 500], ["Laptop", 500], ["Off
 const LC_LABELS = { accom: "Accommodation", transport: "Transport", food: "Food", personal: "Personal", clothing: "Clothing", entertainment: "Entertainment" };
 const UNI_TOTAL = 15000;
 const C = { navy: "#385592", pink: "#fed2ca", coral: "#de5240", cyan: "#cdf0f1", teal: "#2dcd9e" };
+const RA_TABLE = [
+  { situation: "Single", threshold: 152.00, ceiling: 439.20, max: 215.40 },
+];
 const SSL_PER_PERIOD = 1349; const SSL_PERIODS_PER_YEAR = 2; const SSL_ANNUAL = SSL_PER_PERIOD * SSL_PERIODS_PER_YEAR;
 const SPARK_MAX_AMT = 5000; const SPARK_RATE = 0.07; const SPARK_FEE_RATE = 0.05; const SPARK_REPAY_YEARS = 4;
 
 function calcTax(t, br) { if (t <= 0) return 0; let x = 0; for (const [l, h, r] of br) { if (t <= l) break; x += Math.max(0, Math.min(t, h) - l) * r; } return Math.round(x); }
 function calcYA(fnW, mx, fr, t1E, t1R, t2R) { if (fnW <= fr) return mx; const r = fnW <= t1E ? (fnW - fr) * t1R : (t1E - fr) * t1R + (fnW - t1E) * t2R; return Math.max(0, Math.round((mx - r) * 100) / 100); }
 function calcRA(fnR, th, mx, tp) { if (fnR <= th) return 0; return Math.min(Math.round((fnR - th) * tp * 100) / 100, mx); }
+/* Income test reduction per fortnight — independent of CRA.
+   The reduction amount is subtracted from the COMBINED payment (YA + CRA). */
+function calcIncomeTestReduction(fnW, fr, t1E, t1R, t2R) {
+  if (fnW <= fr) return 0;
+  if (fnW <= t1E) return Math.round((fnW - fr) * t1R * 100) / 100;
+  return Math.round(((t1E - fr) * t1R + (fnW - t1E) * t2R) * 100) / 100;
+}
 function calcHR(tx, d, a) { if (tx < a.hecsThreshold || d <= 0) return 0; let r = 0; if (tx <= a.hecsBand2) r = (tx - a.hecsThreshold) * a.hecsRate1; else if (tx <= a.hecsBand3) r = (a.hecsBand2 - a.hecsThreshold) * a.hecsRate1 + (tx - a.hecsBand2) * a.hecsRate2; else r = tx * a.hecsRate3; return Math.min(Math.round(r), Math.round(d)); }
 
 function calcSparkSummary(dd, amts, studyYrs) {
@@ -75,6 +85,7 @@ function calcSparkSummary(dd, amts, studyYrs) {
 }
 
 const fmt = v => { if (v == null) return "-"; const n = v < 0; return n ? `($${Math.abs(Math.round(v)).toLocaleString("en-AU")})` : `$${Math.round(v).toLocaleString("en-AU")}`; };
+const fmt2 = v => { if (v == null) return "-"; const n = v < 0; const abs = Math.abs(v).toFixed(2); return n ? `($${abs})` : `$${abs}`; };
 
 const Inp = ({ label, value, onChange, min, max, step, note, warn, dollar, disabled }) => (
   <div className="flex flex-col gap-0.5">
@@ -127,9 +138,9 @@ export default function App() {
   const [assumptions, setAssumptions] = useState({
     studentSavings: 0, hoursPerWeek: 15, hourlyWage: 24, partTimeStartMonth: 6, postStudyStartSalary: 70000,
     uniAccomMonths: 6, uniOther: 0,
-    yaMaxRate: 684.20, austudyMaxRate: 624.80,
+    yaMaxRate: 677.20, austudyMaxRate: 677.20,
     freeArea: 539, taper1End: 646, taper1Rate: 0.50, taper2Rate: 0.60,
-    raThreshold: 146, raMax: 192.40, raTaper: 0.75,
+    raThreshold: 152, raMax: 215.40, raTaper: 0.75,
     taxBrackets: [[0, 18200, 0], [18200, 45000, 0.16], [45000, 135000, 0.30], [135000, 190000, 0.37], [190000, Infinity, 0.45]],
     hecsThreshold: 67000, hecsRate1: 0.15, hecsBand2: 125000, hecsRate2: 0.17, hecsBand3: 179285, hecsRate3: 0.10,
     hecsIndexation: 0.032, annualCspCost: 9537, ssafFee: 365,
@@ -197,7 +208,8 @@ export default function App() {
     const age1 = p.age; const isYA1 = age1 < 25;
     const payType1 = isYA1 ? "Youth Allowance" : "Austudy";
     const maxR1 = isYA1 ? a.yaMaxRate : a.austudyMaxRate;
-    const yaWorking1 = calcYA(fnW, maxR1, a.freeArea, a.taper1End, a.taper1Rate, a.taper2Rate);
+    /* Income test reduction per fortnight (based on fortnightly wages when working) */
+    const incTestRedFn1 = calcIncomeTestReduction(fnW, a.freeArea, a.taper1End, a.taper1Rate, a.taper2Rate);
     const h1Work = Math.max(0, 6 - a.partTimeStartMonth);
     const h2Work = Math.max(0, 12 - a.partTimeStartMonth) - h1Work;
     const h1WF = h1Work / 6; const h2WF = h2Work / 6;
@@ -207,9 +219,14 @@ export default function App() {
     const uniAccomH2 = Math.round(accomMH2 * weeklyAccom * (52 / 12));
     const ucH1 = uniAccomH1 + uniOtherVal; const ucH2 = uniAccomH2;
     const fullY1WorkFrac = Math.max(0, 12 - a.partTimeStartMonth) / 12;
+    /* For tax: estimate full-year taxable income using the blended gov payment approach */
+    const craPerFnFull1 = calcRA(fnAccom, a.raThreshold, a.raMax, a.raTaper);
+    const combinedMaxFn1 = maxR1 + craPerFnFull1;
+    const netGovPerFnWorking1 = Math.max(0, combinedMaxFn1 - incTestRedFn1);
+    const netGovPerFnNotWorking1 = combinedMaxFn1;
     const fullY1Wages = weeklyWages * 52 * fullY1WorkFrac;
-    const fullY1Ya = (yaWorking1 * fullY1WorkFrac + maxR1 * (1 - fullY1WorkFrac)) * 26;
-    const fullY1Taxable = fullY1Wages + fullY1Ya;
+    const fullY1GovPayment = (netGovPerFnWorking1 * fullY1WorkFrac + netGovPerFnNotWorking1 * (1 - fullY1WorkFrac)) * 26;
+    const fullY1Taxable = fullY1Wages + fullY1GovPayment;
     const fullY1Tax = calcTax(fullY1Taxable, a.taxBrackets);
     const y1ssl = sslAnnualForYear(1);
     const y1sparkAmt = sparkAmts[0] || SPARK_MAX_AMT;
@@ -220,22 +237,48 @@ export default function App() {
       const wf = half === 1 ? h1WF : h2WF;
       const wks = 26; const fns = 13;
       const wages = weeklyWages * wks * wf;
-      const ymx = maxR1 * fns;
-      const ynet = (yaWorking1 * wf + maxR1 * (1 - wf)) * fns;
-      const yred = -(ymx - ynet);
       const uc = half === 1 ? ucH1 : ucH2;
       const ac = weeklyAccom * wks; const oth = weeklyOther * wks; const liv = ac + oth;
       const setup = half === 1 ? setupY1 : 0;
-      const halfTaxable = wages + ynet;
+      const ucAccomThis = half === 1 ? uniAccomH1 : uniAccomH2;
+      /* RA fix: during uni-covered months student pays $0 rent (no RA);
+         during self-funded months student pays full rent (full RA) */
+      const uniCoveredMonths = half === 1 ? accomMH1 : accomMH2;
+      const selfFundedWeeks = Math.max(0, wks - uniCoveredMonths * (52 / 12));
+      const selfFundedFns = selfFundedWeeks / 2;
+      const uniCoveredFns = fns - selfFundedFns;
+      const fnFullAccom = weeklyAccom * 2;
+      const craPerFnSelf = calcRA(fnFullAccom, a.raThreshold, a.raMax, a.raTaper);
+
+      /* ═══ COMBINED INCOME TEST (YA + CRA) ═══
+         Per Commonwealth regs, CRA has no separate income test.
+         CRA is added to the base payment; the income test reduction
+         is applied to the COMBINED total (YA + CRA).
+         We compute net gov payment across 4 fortnight types:
+           working × self-funded, working × uni-covered,
+           non-working × self-funded, non-working × uni-covered */
+      const workSelfFns = wf * selfFundedFns;
+      const workUniFns = wf * uniCoveredFns;
+      const noWorkSelfFns = (1 - wf) * selfFundedFns;
+      const noWorkUniFns = (1 - wf) * uniCoveredFns;
+
+      const netPerFnWorkSelf = Math.max(0, maxR1 + craPerFnSelf - incTestRedFn1);
+      const netPerFnWorkUni = Math.max(0, maxR1 - incTestRedFn1);
+      const netPerFnNoWorkSelf = maxR1 + craPerFnSelf;
+      const netPerFnNoWorkUni = maxR1;
+
+      const govNet = Math.round(
+        (netPerFnWorkSelf * workSelfFns + netPerFnWorkUni * workUniFns
+         + netPerFnNoWorkSelf * noWorkSelfFns + netPerFnNoWorkUni * noWorkUniFns) * 100) / 100;
+      const govMaxYA = Math.round(maxR1 * fns * 100) / 100;
+      const govMaxCRA = Math.round(craPerFnSelf * selfFundedFns * 100) / 100;
+      const govIncomeTestReduction = -(govMaxYA + govMaxCRA - govNet);
+
+      const savings = half === 1 ? a.studentSavings : 0;
+      const totI = savings + wages + govNet + uc;
+      const halfTaxable = wages + govNet;
       const tax = fullY1Taxable > 0 ? Math.round(fullY1Tax * (halfTaxable / fullY1Taxable)) : 0;
       hd += (a.annualCspCost + a.ssafFee) / 2;
-      const ucAccomThis = half === 1 ? uniAccomH1 : uniAccomH2;
-      const selfFundedAccomWeekly = Math.max(0, weeklyAccom - (ucAccomThis / wks));
-      const fnSelfAccom = selfFundedAccomWeekly * 2;
-      const raPerFnHalf = calcRA(fnSelfAccom, a.raThreshold, a.raMax, a.raTaper);
-      const rmx = a.raMax * fns; const rnet = raPerFnHalf * fns; const rred = -(rmx - rnet);
-      const savings = half === 1 ? a.studentSavings : 0;
-      const totI = savings + wages + ynet + rnet + uc;
       const totD = tax;
       const hSsl = half === 1 ? y1ssl : 0;
       const hSpark = half === 1 ? y1spark : 0;
@@ -248,8 +291,7 @@ export default function App() {
         isStudy: true, isTransition: false, isHalf: true,
         ageThisYear: age1, paymentType: payType1,
         studentSavings: savings, wages, taxableIncome: halfTaxable,
-        yaMax: ymx, yaReduction: yred, yaNet: ynet,
-        raMax: rmx, raReduction: rred, raNet: rnet,
+        govMaxYA, govMaxCRA, govIncomeTestReduction, govNetPayment: govNet,
         uniContrib: uc, totalIncome: totI, tax, hecsRepay: 0, totalDeductions: totD,
         accomCost: ac, accomUniCovered: Math.min(ucAccomThis, ac),
         accomSelfFunded: Math.max(0, ac - ucAccomThis),
@@ -266,11 +308,10 @@ export default function App() {
     const y1t = {
       id: "y1", year: 1, half: 0, label: "Year 1", sublabel: "Study",
       isStudy: true, isTransition: false, isHalf: false, ageThisYear: age1, paymentType: payType1,
-      ...sumF(h1d, h2d, "studentSavings", "wages", "yaMax", "yaNet", "raMax", "raNet", "uniContrib", "tax", "hecsRepay",
+      ...sumF(h1d, h2d, "studentSavings", "wages", "govMaxYA", "govMaxCRA", "govNetPayment", "uniContrib", "tax", "hecsRepay",
         "accomCost", "accomUniCovered", "accomSelfFunded", "otherLivingCost", "livingCosts", "setupCosts",
         "sslDrawdown", "sparkDrawdown", "sparkRepay", "sslRepay", "netFinancing", "netCashflow", "netCashflowTotal"),
-      yaReduction: (h1d.yaReduction || 0) + (h2d.yaReduction || 0),
-      raReduction: (h1d.raReduction || 0) + (h2d.raReduction || 0),
+      govIncomeTestReduction: (h1d.govIncomeTestReduction || 0) + (h2d.govIncomeTestReduction || 0),
       taxableIncome: (h1d.taxableIncome || 0) + (h2d.taxableIncome || 0),
       totalIncome: (h1d.totalIncome || 0) + (h2d.totalIncome || 0),
       totalDeductions: (h1d.totalDeductions || 0) + (h2d.totalDeductions || 0),
@@ -288,18 +329,25 @@ export default function App() {
       const maxR = isYA ? a.yaMaxRate : a.austudyMaxRate;
       const inf = Math.pow(1 + a.inflation, y - 1);
       const wgM = isStudy ? 1 : Math.pow(1 + a.wageGrowth, y - p.studyYears - 1);
-      let wages = 0, ymx = 0, ynet = 0, yred = 0, rmx = 0, rnet = 0, rred = 0;
+      let wages = 0, govMaxYA = 0, govMaxCRA = 0, govIncomeTestReduction = 0, govNetPayment = 0;
       let tax = 0, hr = 0, taxableInc = 0;
       const ac = weeklyAccom * 52 * inf; const oth = weeklyOther * 52 * inf;
       let ySsl = 0, ySpark = 0, ySparkRep = 0, ySslRep = 0;
 
       if (isStudy) {
         wages = weeklyWages * 52;
-        const yaW = calcYA(fnW, maxR, a.freeArea, a.taper1End, a.taper1Rate, a.taper2Rate);
-        ymx = maxR * 26; ynet = yaW * 26; yred = -(ymx - ynet);
-        const raPerFn = calcRA(fnAccom, a.raThreshold, a.raMax, a.raTaper);
-        rmx = a.raMax * 26; rnet = raPerFn * 26; rred = -(rmx - rnet);
-        taxableInc = wages + ynet;
+        /* Combined income test: CRA has no separate income test.
+           YA + CRA combined, then income test reduction applied to total. */
+        const craPerFn = calcRA(fnAccom, a.raThreshold, a.raMax, a.raTaper);
+        const incTestRedFn = calcIncomeTestReduction(fnW, a.freeArea, a.taper1End, a.taper1Rate, a.taper2Rate);
+        const combinedMaxFn = maxR + craPerFn;
+        const netPerFn = Math.max(0, combinedMaxFn - incTestRedFn);
+        const fns = 26;
+        govMaxYA = Math.round(maxR * fns * 100) / 100;
+        govMaxCRA = Math.round(craPerFn * fns * 100) / 100;
+        govNetPayment = Math.round(netPerFn * fns * 100) / 100;
+        govIncomeTestReduction = -(govMaxYA + govMaxCRA - govNetPayment);
+        taxableInc = wages + govNetPayment;
         tax = calcTax(taxableInc, a.taxBrackets);
         hd += (a.annualCspCost + a.ssafFee) * inf;
         ySsl = sslAnnualForYear(y);
@@ -325,7 +373,7 @@ export default function App() {
         if (y > sparkRepayEndYear) sparkBal = 0;
       }
       const liv = ac + oth;
-      const totI = wages + ynet + rnet;
+      const totI = wages + govNetPayment;
       const totD = tax + hr;
       const netFin = ySsl + ySpark - ySparkRep - ySslRep;
       rows.push({
@@ -333,8 +381,7 @@ export default function App() {
         sublabel: isStudy ? "Study" : isTransition ? "Job Search / Working" : "Working",
         isStudy, isTransition, isHalf: false, ageThisYear: age, paymentType: payType,
         studentSavings: 0, wages, taxableIncome: taxableInc,
-        yaMax: ymx, yaReduction: yred, yaNet: ynet,
-        raMax: rmx, raReduction: rred, raNet: rnet,
+        govMaxYA, govMaxCRA, govIncomeTestReduction, govNetPayment,
         uniContrib: 0, totalIncome: totI, tax, hecsRepay: hr, totalDeductions: totD,
         accomCost: ac, accomUniCovered: 0, accomSelfFunded: ac,
         otherLivingCost: oth, livingCosts: liv, setupCosts: 0,
@@ -358,12 +405,10 @@ export default function App() {
     { key: "h_i", label: "INCOME", hdr: true },
     { key: "sv", label: "Student Savings", f: "studentSavings" },
     { key: "uc", label: "University Contribution", f: "uniContrib" },
-    { key: "ya_max", label: "Max YA / Austudy Available", f: "yaMax", studyOnly: true, parent: "ya_net", indent: 1 },
-    { key: "ya_red", label: "Less: Income Test Reduction", f: "yaReduction", studyOnly: true, parent: "ya_net", indent: 1 },
-    { key: "ya_net", label: "YA / Austudy", f: "yaNet", studyOnly: true, expandable: true, tip: "Click to see income test detail" },
-    { key: "ra_max", label: "Max Rent Assistance Available", f: "raMax", studyOnly: true, parent: "ra_net", indent: 1 },
-    { key: "ra_red", label: "Less: RA Taper Reduction", f: "raReduction", studyOnly: true, parent: "ra_net", indent: 1 },
-    { key: "ra_net", label: "Rent Assistance", f: "raNet", studyOnly: true, expandable: true, tip: "Click to see taper detail" },
+    { key: "gov_ya", label: "Max YA / Austudy Entitlement", f: "govMaxYA", studyOnly: true, parent: "gov_net", indent: 1 },
+    { key: "gov_cra", label: "Max Rent Assistance Entitlement", f: "govMaxCRA", studyOnly: true, parent: "gov_net", indent: 1 },
+    { key: "gov_red", label: "Less: Income Test Reduction", f: "govIncomeTestReduction", studyOnly: true, parent: "gov_net", indent: 1 },
+    { key: "gov_net", label: "Government Payment (YA + Rent Assist)", f: "govNetPayment", studyOnly: true, expandable: true, tip: "Click to see income test detail" },
     { key: "w", label: "Wages (Part-time / Full-time)", f: "wages" },
     { key: "ti", label: "Total Income", f: "totalIncome", sub: true },
     { key: "h_e", label: "EXPENDITURE", hdr: true },
@@ -374,7 +419,7 @@ export default function App() {
     { key: "lc_other", label: "Other Living Costs", f: "otherLivingCost", parent: "lc", indent: 1 },
     { key: "lc", label: "Total Living Costs", f: "livingCosts", expandable: true, tip: "Click to see cost breakdown" },
     { key: "h_d", label: "DEDUCTIONS", hdr: true },
-    { key: "tx_inc", label: "Taxable Income", f: "taxableIncome", parent: "tx", indent: 1 },
+    { key: "tx_inc", label: "Taxable Income", f: "taxableIncome", parent: "tx", indent: 1, muted: true },
     { key: "tx", label: "Tax", f: "tax", expandable: true, tip: "Click to see taxable income" },
     { key: "hc", label: "HECS Repayment", f: "hecsRepay" },
     { key: "td", label: "Total Deductions", f: "totalDeductions", sub: true },
@@ -516,13 +561,17 @@ export default function App() {
         {/* ═══ ASSUMPTIONS ═══ */}
         {tab === "assumptions" && (
           <div className="bg-white rounded-lg border p-5" style={{ borderColor: "#e5e7eb" }}>
-            <Section title="Wages & Employment">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Section title="Savings, Part-time Work and Employment">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
                 <Inp label="Student Savings (Year 1)" value={a.studentSavings} onChange={v => upA("studentSavings", v)} step={100} dollar note="Lump sum in Year 1 H1" />
-                <Inp label="Hours/week (study)" value={a.hoursPerWeek} onChange={v => upA("hoursPerWeek", v)} min={0} max={48} />
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
+                <Inp label="Part time work – hours/week" value={a.hoursPerWeek} onChange={v => upA("hoursPerWeek", v)} min={0} max={48} />
                 <Inp label="Hourly wage" value={a.hourlyWage} onChange={v => upA("hourlyWage", v)} step={0.5} dollar />
                 <Inp label="PT work starts (month)" value={a.partTimeStartMonth} onChange={v => upA("partTimeStartMonth", v)} min={1} max={12} note={`First ${a.partTimeStartMonth - 1} months no work`} />
-                <Inp label="Post-study salary" value={a.postStudyStartSalary} onChange={v => upA("postStudyStartSalary", v)} step={1000} dollar />
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <Inp label="Post-study salary (annual)" value={a.postStudyStartSalary} onChange={v => upA("postStudyStartSalary", v)} step={1000} dollar />
               </div>
             </Section>
             <Section title="University Contribution">
@@ -534,28 +583,52 @@ export default function App() {
             </Section>
             <Section title="YA / Austudy">
               <PinkNote>
-                Youth Allowance is for students under 25. Austudy is for students 25 and over. This model assumes the student is single with no children and living away from home. More info:{" "}
+                Youth Allowance is for students under 25. Austudy is for students 25 and over. This model assumes the student is single with no children and living away from home. Payments reduce in accordance with a personal income test as described below. More info:{" "}
                 <a href="https://www.servicesaustralia.gov.au/youth-allowance" target="_blank" rel="noopener noreferrer" style={{ color: C.navy, textDecoration: "underline" }}>Youth Allowance</a> |{" "}
                 <a href="https://www.servicesaustralia.gov.au/austudy" target="_blank" rel="noopener noreferrer" style={{ color: C.navy, textDecoration: "underline" }}>Austudy</a>
               </PinkNote>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <Inp label="YA Max (fortnightly)" value={a.yaMaxRate} onChange={v => upA("yaMaxRate", v)} step={0.1} dollar />
-                <Inp label="Austudy Max (fortnightly)" value={a.austudyMaxRate} onChange={v => upA("austudyMaxRate", v)} step={0.1} dollar />
-                <Inp label="Income Free Area (fortnightly)" value={a.freeArea} onChange={v => upA("freeArea", v)} step={1} dollar />
-                <Inp label="Taper 1 End (fortnightly)" value={a.taper1End} onChange={v => upA("taper1End", v)} step={1} dollar />
-                <Inp label="Taper 1 Rate" value={a.taper1Rate} onChange={v => upA("taper1Rate", v)} step={0.01} note="0.50 = 50c/$" />
-                <Inp label="Taper 2 Rate" value={a.taper2Rate} onChange={v => upA("taper2Rate", v)} step={0.01} note="0.60 = 60c/$" />
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                <Inp label="YA Max (fortnightly)" value={a.yaMaxRate} onChange={() => {}} step={0.1} dollar disabled
+                  note="Single, no children, 18+, away from home" />
+                <Inp label="Austudy Max (fortnightly)" value={a.austudyMaxRate} onChange={() => {}} step={0.1} dollar disabled
+                  note="Single, no children" />
+              </div>
+              <div className="p-3 rounded text-xs mb-2" style={{ backgroundColor: "#f0f4ff", color: C.navy, border: `1px solid ${C.navy}20` }}>
+                <h4 className="font-semibold mb-1">How the personal income test works</h4>
+                <p className="mb-1"><strong>Youth Allowance / Austudy (students):</strong> You can earn up to <strong>${a.freeArea}</strong> per fortnight before your payment is affected (the "income free area"). For each dollar earned between ${a.freeArea} and ${a.taper1End}, your combined payment reduces by <strong>50 cents</strong>. For each dollar above ${a.taper1End}, your combined payment reduces by <strong>60 cents</strong>. The reduction is applied to your total payment (YA/Austudy + Rent Assistance combined). An Income Bank allows you to accumulate unused free area credits in low-income fortnights to offset higher-income fortnights.</p>
               </div>
             </Section>
             <Section title="Rent Assistance">
               <PinkNote>
-                Rent Assistance is an additional payment for eligible students. This model assumes the student is single and not in a shared dwelling.{" "}
-                <a href="https://www.servicesaustralia.gov.au/rent-assistance" target="_blank" rel="noopener noreferrer" style={{ color: C.navy, textDecoration: "underline" }}>More info</a>
+                Rent Assistance is an additional payment for eligible students. This model assumes the student is single and is not sharing.{" "}
+                <a href="https://www.servicesaustralia.gov.au/how-much-rent-assistance-you-can-get?context=22206" target="_blank" rel="noopener noreferrer" style={{ color: C.navy, textDecoration: "underline" }}>More info</a>
               </PinkNote>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <Inp label="RA Threshold (fortnightly)" value={a.raThreshold} onChange={v => upA("raThreshold", v)} step={1} dollar />
-                <Inp label="RA Max (fortnightly)" value={a.raMax} onChange={v => upA("raMax", v)} step={0.1} dollar />
-                <Inp label="RA Taper Rate" value={a.raTaper} onChange={v => upA("raTaper", v)} step={0.01} note="0.75 = 75c/$" />
+              <div className="overflow-x-auto mb-4">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr style={{ backgroundColor: C.cyan }}>
+                      <th className="text-left p-2 font-semibold" style={{ color: C.navy }}>If you're</th>
+                      <th className="text-left p-2 font-semibold" style={{ color: C.navy }}>Your fortnightly rent is more than</th>
+                      <th className="text-left p-2 font-semibold" style={{ color: C.navy }}>To get the maximum payment your fortnightly rent is at least</th>
+                      <th className="text-left p-2 font-semibold" style={{ color: C.navy }}>The maximum fortnightly payment is</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {RA_TABLE.map((row, i) => (
+                      <tr key={i} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                        <td className="p-2">{row.situation}</td>
+                        <td className="p-2 font-mono">{fmt2(row.threshold)}</td>
+                        <td className="p-2 font-mono">{fmt2(row.ceiling)}</td>
+                        <td className="p-2 font-mono font-semibold">{fmt2(row.max)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="p-3 rounded text-xs" style={{ backgroundColor: "#f0f4ff", color: C.navy, border: `1px solid ${C.navy}20` }}>
+                <h4 className="font-semibold mb-1">How Rent Assistance works</h4>
+                <p className="mb-1">Rent Assistance is calculated based on the rent you pay. For every $1 of fortnightly rent you pay above the rent threshold ({fmt(a.raThreshold)}), you receive <strong>75 cents</strong> in Rent Assistance, up to the maximum payment.</p>
+                <p>Rent Assistance is <strong>not subject to a separate income test</strong>. It is added to your qualifying payment (YA or Austudy) to form a combined maximum rate. The personal income test reduction is then applied to this combined total. This means your Rent Assistance is only affected once the income test reduction exceeds your base YA/Austudy amount.</p>
               </div>
             </Section>
             <Section title="Expenses">
@@ -588,19 +661,20 @@ export default function App() {
                 <a href="https://www.studyassist.gov.au/financial-and-study-support/commonwealth-supported-places/student-contribution-amounts" target="_blank" rel="noopener noreferrer" style={{ color: C.navy, textDecoration: "underline" }}>here</a>.
               </PinkNote>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <Inp label="Annual Tuition Fees (CSP FTSE)" value={a.annualCspCost} onChange={v => upA("annualCspCost", v)} step={100} dollar
+                <Inp label="Annual Tuition Fees (CSP FTSE)" value={a.annualCspCost} onChange={() => {}} step={100} dollar disabled
                   note={`${p.fieldOfStudy} — Band ${fld.band}`} />
               </div>
             </Section>
             <Section title="HECS-HELP Repayment">
+              <PinkNote>These rates are set by the Australian Government and are not editable. More information is available at <a href="https://www.ato.gov.au/individuals-and-families/study-and-training-support-loans/repaying-your-loan" target="_blank" rel="noopener noreferrer" style={{ color: C.navy, textDecoration: "underline" }}>ato.gov.au</a>.</PinkNote>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <Inp label="Threshold" value={a.hecsThreshold} onChange={v => upA("hecsThreshold", v)} step={1000} dollar />
-                <Inp label="Rate 1 (above threshold)" value={a.hecsRate1} onChange={v => upA("hecsRate1", v)} step={0.01} />
-                <Inp label="Band 2" value={a.hecsBand2} onChange={v => upA("hecsBand2", v)} step={1000} dollar />
-                <Inp label="Rate 2 (above Band 2)" value={a.hecsRate2} onChange={v => upA("hecsRate2", v)} step={0.01} />
-                <Inp label="Band 3" value={a.hecsBand3} onChange={v => upA("hecsBand3", v)} step={1000} dollar />
-                <Inp label="Rate 3 (above Band 3)" value={a.hecsRate3} onChange={v => upA("hecsRate3", v)} step={0.01} />
-                <Inp label="HECS Indexation Rate" value={a.hecsIndexation} onChange={v => upA("hecsIndexation", v)} step={0.001} note="0.032 = 3.2%" />
+                <Inp label="Threshold" value={a.hecsThreshold} onChange={() => {}} step={1000} dollar disabled />
+                <Inp label="Rate 1 (above threshold)" value={a.hecsRate1} onChange={() => {}} step={0.01} disabled />
+                <Inp label="Band 2" value={a.hecsBand2} onChange={() => {}} step={1000} dollar disabled />
+                <Inp label="Rate 2 (above Band 2)" value={a.hecsRate2} onChange={() => {}} step={0.01} disabled />
+                <Inp label="Band 3" value={a.hecsBand3} onChange={() => {}} step={1000} dollar disabled />
+                <Inp label="Rate 3 (above Band 3)" value={a.hecsRate3} onChange={() => {}} step={0.01} disabled />
+                <Inp label="HECS Indexation Rate" value={a.hecsIndexation} onChange={() => {}} step={0.001} note="0.032 = 3.2%" disabled />
               </div>
             </Section>
             <Section title="SSAF (Student Services & Amenities Fee)">
@@ -765,7 +839,7 @@ export default function App() {
                     return (
                       <tr key={row.key} style={{ backgroundColor: isNetHighlight ? `${C.teal}15` : isTotal ? "#f0fdf4" : "white", borderBottom: "1px solid #f3f4f6" }}>
                         <td className="px-3 py-1.5 sticky left-0 z-10"
-                          style={{ backgroundColor: isNetHighlight ? `${C.teal}15` : isTotal ? "#f0fdf4" : "white", paddingLeft: `${12 + (row.indent || 0) * 16}px`, cursor: row.expandable ? "pointer" : "default", color: row.note ? C.teal : C.navy, fontWeight: isSub || isTotal || isCum || isDebt || isNetHighlight ? 600 : 400, fontStyle: row.note ? "italic" : "normal" }}
+                          style={{ backgroundColor: isNetHighlight ? `${C.teal}15` : isTotal ? "#f0fdf4" : "white", paddingLeft: `${12 + (row.indent || 0) * 16}px`, cursor: row.expandable ? "pointer" : "default", color: row.muted ? "#9ca3af" : row.note ? C.teal : C.navy, fontWeight: isSub || isTotal || isCum || isDebt || isNetHighlight ? 600 : 400, fontStyle: row.note || row.muted ? "italic" : "normal" }}
                           onClick={() => row.expandable && toggleExp(row.key)}>
                           {row.expandable && <span className="mr-1">{expanded.has(row.key) ? "▾" : "▸"}</span>}
                           {row.label}
@@ -781,8 +855,9 @@ export default function App() {
                           const neg = val < 0;
                           return (
                             <td key={pr.id} className="p-2 text-right font-mono"
-                              style={{ color: neg ? C.coral : isNetHighlight ? "#065f46" : isTotal ? C.navy : isCum ? "#92400e" : isDebt ? C.coral : C.navy,
+                              style={{ color: neg ? C.coral : row.muted ? "#9ca3af" : isNetHighlight ? "#065f46" : isTotal ? C.navy : isCum ? "#92400e" : isDebt ? C.coral : C.navy,
                                 fontWeight: isSub || isTotal || isCum || isDebt || isNetHighlight ? 600 : 400,
+                                fontStyle: row.muted ? "italic" : "normal",
                                 backgroundColor: isNetHighlight ? `${C.teal}30` : "transparent" }}>
                               {fmt(val)}
                             </td>
@@ -811,8 +886,10 @@ export default function App() {
                       <h4 className="font-semibold uppercase mb-1" style={{ color: C.navy }}>Income</h4>
                       {pr.studentSavings > 0 && <div>Student Savings: {fmt(pr.studentSavings)}</div>}
                       <div>Wages ({wks} wks): {fmt(pr.wages)}</div>
-                      {pr.isStudy && <div>{pr.paymentType}: {fmt(pr.yaNet)} (max {fmt(pr.yaMax)}, reduced {fmt(pr.yaReduction)})</div>}
-                      {pr.isStudy && <div>Rent Assistance: {fmt(pr.raNet)} (max {fmt(pr.raMax)}, reduced {fmt(pr.raReduction)})</div>}
+                      {pr.isStudy && <div>Government Payment: {fmt(pr.govNetPayment)}</div>}
+                      {pr.isStudy && <div style={{ paddingLeft: 12, color: "#6b7280" }}>Max {pr.paymentType}: {fmt(pr.govMaxYA)}</div>}
+                      {pr.isStudy && <div style={{ paddingLeft: 12, color: "#6b7280" }}>Max Rent Assistance: {fmt(pr.govMaxCRA)}</div>}
+                      {pr.isStudy && <div style={{ paddingLeft: 12, color: "#6b7280" }}>Income Test Reduction: {fmt(pr.govIncomeTestReduction)}</div>}
                       {pr.uniContrib > 0 && <div>Uni Contribution: {fmt(pr.uniContrib)}</div>}
                       <div className="font-semibold mt-1">Total Income: {fmt(pr.totalIncome)}</div>
                     </div>
