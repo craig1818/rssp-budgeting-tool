@@ -193,7 +193,9 @@ export default function App() {
 
   /* CHANGE 3: Compute paTotal from editable state instead of hardcoded PA_TOTALS */
   const paTotal = paItems.reduce((s, [, v]) => s + v, 0);
-  const setupY1 = paTotal + setupTotal + studyEssTotal;
+  const bondAmount = setupItems.reduce((s, [l, v]) => l.toLowerCase().includes("bond") ? s + v : s, 0);
+  const setupNoBond = setupTotal - bondAmount;
+  const setupY1 = paTotal + setupNoBond + studyEssTotal;
   const sparkSummary = useMemo(() => calcSparkSummary(sparkDD, sparkAmts, p.studyYears), [sparkDD, sparkAmts, p.studyYears]);
   const sslAnnualForYear = y => (y >= 1 && y <= 3 && y <= p.studyYears && sslYears[y - 1]) ? SSL_ANNUAL : 0;
 
@@ -238,7 +240,8 @@ export default function App() {
       const wks = 26; const fns = 13;
       const wages = weeklyWages * wks * wf;
       const uc = half === 1 ? ucH1 : ucH2;
-      const ac = weeklyAccom * wks; const oth = weeklyOther * wks; const liv = ac + oth;
+      const bondInThisHalf = (half === 1 && a.uniAccomMonths < 6) || (half === 2 && a.uniAccomMonths >= 6) ? bondAmount : 0;
+      const ac = weeklyAccom * wks; const oth = weeklyOther * wks; const liv = ac + oth + bondInThisHalf;
       const setup = half === 1 ? setupY1 : 0;
       const ucAccomThis = half === 1 ? uniAccomH1 : uniAccomH2;
       /* RA fix: during uni-covered months student pays $0 rent (no RA);
@@ -433,9 +436,9 @@ export default function App() {
         { key: "ssl_rp", label: "SSL Repayment", f: "sslRepay", indent: 1 },
       ] : []),
       ...(sparkDD.some((v, i) => v && i < p.studyYears) ? [
-        { key: "h_spark", label: "Spark Loan", hdr: true, subhdr: true },
-        { key: "spark_dd", label: "Spark Loan Drawdown", f: "sparkDrawdown", indent: 1 },
-        { key: "spark_rp", label: "Spark Loan Repayment", f: "sparkRepay", indent: 1 },
+        { key: "h_spark", label: "Refugee Student Loan", hdr: true, subhdr: true },
+        { key: "spark_dd", label: "Refugee Student Loan Drawdown", f: "sparkDrawdown", indent: 1 },
+        { key: "spark_rp", label: "Refugee Student Loan Repayment", f: "sparkRepay", indent: 1 },
       ] : []),
       { key: "nf", label: "Net Financing", f: "netFinancing", sub: true },
     ] : []),
@@ -445,7 +448,7 @@ export default function App() {
     { key: "h_debt", label: "DEBT POSITIONS", hdr: true },
     { key: "debt", label: "HECS Debt Outstanding", f: "hecsDebt", debt: true },
     ...(sslEnabled ? [{ key: "ssl_bal", label: "SSL Debt Outstanding", f: "sslDebtBal", debt: true }] : []),
-    ...(sparkDD.some((v, i) => v && i < p.studyYears) ? [{ key: "spark_bal", label: "Spark Loan Balance", f: "sparkBalance", debt: true }] : []),
+    ...(sparkDD.some((v, i) => v && i < p.studyYears) ? [{ key: "spark_bal", label: "Refugee Student Loan Balance", f: "sparkBalance", debt: true }] : []),
   ];
 
   const TABS = [["profile", "Student Profile"], ["setup", "Setup Costs"], ["assumptions", "Assumptions"], ["funding", "Funding"], ["cashflows", "Annual Cashflows"]];
@@ -532,6 +535,7 @@ export default function App() {
                   </div>
                 ))}
                 <div className="flex justify-between text-sm font-semibold pt-1 mt-1 border-t"><span>Subtotal</span><span className="font-mono">{fmt(setupTotal)}</span></div>
+                <p className="text-xs text-gray-500 mt-2 italic">Bond for rental accommodation is assumed to be incurred by the student when they move out of the accommodation that the university provides.</p>
               </div>
               <div>
                 <div className="flex justify-between items-center mb-2">
@@ -549,11 +553,12 @@ export default function App() {
                   </div>
                 ))}
                 <div className="flex justify-between text-sm font-semibold pt-1 mt-1 border-t"><span>Subtotal</span><span className="font-mono">{fmt(studyEssTotal)}</span></div>
+                <p className="text-xs text-gray-500 mt-2 italic">Study Essentials are typically covered by the university as part of the support package they provide. The assumptions regarding the size and scope of their support package are set out in the assumptions page.</p>
               </div>
             </div>
             <div className="mt-4 p-3 rounded flex justify-between items-center" style={{ backgroundColor: C.cyan }}>
               <span className="text-sm font-semibold" style={{ color: C.navy }}>Total Year 1 Setup Costs</span>
-              <span className="text-lg font-bold font-mono" style={{ color: C.navy }}>{fmt(setupY1)}</span>
+              <span className="text-lg font-bold font-mono" style={{ color: C.navy }}>{fmt(setupY1 + bondAmount)}</span>
             </div>
           </div>
         )}
@@ -561,6 +566,30 @@ export default function App() {
         {/* ═══ ASSUMPTIONS ═══ */}
         {tab === "assumptions" && (
           <div className="bg-white rounded-lg border p-5" style={{ borderColor: "#e5e7eb" }}>
+            <Section title="Living Expenses">
+              <PinkNote>
+                These are Skill Path assumptions based on the government cost of living calculator at{" "}
+                <a href="https://costofliving.studyaustralia.gov.au" target="_blank" rel="noopener noreferrer" style={{ color: C.navy, textDecoration: "underline" }}>costofliving.studyaustralia.gov.au</a>.
+                Defaults update when you change university. You can override any value below.
+              </PinkNote>
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-xs font-medium" style={{ color: C.navy }}>Weekly living costs — {city}</span>
+                <button onClick={resetLC} className="text-xs underline" style={{ color: C.navy }}>Reset to defaults</button>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
+                {Object.entries(LC_LABELS).map(([k, label]) => (
+                  <Inp key={k} label={label} value={lc[k] ?? cityDef[k]} onChange={v => upLC(k, v)} min={0} step={1} dollar
+                    note={lc[k] !== cityDef[k] ? `Default: $${cityDef[k]}` : ""} />
+                ))}
+              </div>
+              <div className="flex justify-between items-center p-2 rounded text-sm" style={{ backgroundColor: C.cyan }}>
+                <span className="font-medium" style={{ color: C.navy }}>Total Weekly</span>
+                <span className="font-mono font-semibold" style={{ color: C.navy }}>${lcTotal.toLocaleString()}/wk</span>
+              </div>
+              <div className="flex justify-between items-center mt-1 text-xs text-gray-500">
+                <span>Annual (×52)</span><span className="font-mono">{fmt(cityAnnual)}</span>
+              </div>
+            </Section>
             <Section title="Savings, Part-time Work and Employment">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
                 <Inp label="Student Savings (Year 1)" value={a.studentSavings} onChange={v => upA("studentSavings", v)} step={100} dollar note="Lump sum in Year 1 H1" />
@@ -570,20 +599,21 @@ export default function App() {
                 <Inp label="Hourly wage" value={a.hourlyWage} onChange={v => upA("hourlyWage", v)} step={0.5} dollar />
                 <Inp label="PT work starts (month)" value={a.partTimeStartMonth} onChange={v => upA("partTimeStartMonth", v)} min={1} max={12} note={`First ${a.partTimeStartMonth - 1} months no work`} />
               </div>
+              <PinkNote>We do not recommend students work more than ~15 hours per week in their first year so that they focus on their studies and adjust to living in a new country.</PinkNote>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <Inp label="Post-study salary (annual)" value={a.postStudyStartSalary} onChange={v => upA("postStudyStartSalary", v)} step={1000} dollar />
               </div>
             </Section>
             <Section title="University Contribution">
-              <PinkNote>Total university contribution is capped at {fmt(UNI_TOTAL)}. Accommodation portion is calculated from months × weekly rate; the remainder automatically fills as "Other".</PinkNote>
+              <PinkNote>The total university contribution is assumed to be {fmt(UNI_TOTAL)}. This comprises the cost of accommodation for a period of time with the remaining contribution assumed to go to general living expenses (eg. Cost of study essentials) in the first six months.</PinkNote>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <Inp label="Accommodation months covered" value={a.uniAccomMonths} onChange={v => upA("uniAccomMonths", v)} min={0} max={12}
                   note={`= ${fmt(uniAccomVal)} accom + ${fmt(uniOtherVal)} other`} />
               </div>
             </Section>
-            <Section title="YA / Austudy">
+            <Section title="Youth Allowance/Austudy">
               <PinkNote>
-                Youth Allowance is for students under 25. Austudy is for students 25 and over. This model assumes the student is single with no children and living away from home. Payments reduce in accordance with a personal income test as described below. More info:{" "}
+                Youth Allowance and Austudy are Australian Government payments which students will receive depending on their situation. Youth Allowance is for students under 25. Austudy is for students 25 and over. This model assumes the student is single with no children and living away from home. Payments reduce in accordance with a personal income test as described below. More info:{" "}
                 <a href="https://www.servicesaustralia.gov.au/youth-allowance" target="_blank" rel="noopener noreferrer" style={{ color: C.navy, textDecoration: "underline" }}>Youth Allowance</a> |{" "}
                 <a href="https://www.servicesaustralia.gov.au/austudy" target="_blank" rel="noopener noreferrer" style={{ color: C.navy, textDecoration: "underline" }}>Austudy</a>
               </PinkNote>
@@ -600,8 +630,8 @@ export default function App() {
             </Section>
             <Section title="Rent Assistance">
               <PinkNote>
-                Rent Assistance is an additional payment for eligible students. This model assumes the student is single and is not sharing.{" "}
-                <a href="https://www.servicesaustralia.gov.au/how-much-rent-assistance-you-can-get?context=22206" target="_blank" rel="noopener noreferrer" style={{ color: C.navy, textDecoration: "underline" }}>More info</a>
+                Rent Assistance is an additional government payment for eligible students. This model assumes the student is single and is not sharing to calculate the size of the payment. More info regarding Rent Assistance from the Australian Government{" "}
+                <a href="https://www.servicesaustralia.gov.au/how-much-rent-assistance-you-can-get?context=22206" target="_blank" rel="noopener noreferrer" style={{ color: C.navy, textDecoration: "underline" }}>here</a>.
               </PinkNote>
               <div className="overflow-x-auto mb-4">
                 <table className="w-full text-xs">
@@ -631,30 +661,6 @@ export default function App() {
                 <p>Rent Assistance is <strong>not subject to a separate income test</strong>. It is added to your qualifying payment (YA or Austudy) to form a combined maximum rate. The personal income test reduction is then applied to this combined total. This means your Rent Assistance is only affected once the income test reduction exceeds your base YA/Austudy amount.</p>
               </div>
             </Section>
-            <Section title="Expenses">
-              <PinkNote>
-                These are Skill Path assumptions based on the government cost of living calculator at{" "}
-                <a href="https://costofliving.studyaustralia.gov.au" target="_blank" rel="noopener noreferrer" style={{ color: C.navy, textDecoration: "underline" }}>costofliving.studyaustralia.gov.au</a>.
-                Defaults update when you change university. You can override any value below.
-              </PinkNote>
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-xs font-medium" style={{ color: C.navy }}>Weekly living costs — {city}</span>
-                <button onClick={resetLC} className="text-xs underline" style={{ color: C.navy }}>Reset to defaults</button>
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
-                {Object.entries(LC_LABELS).map(([k, label]) => (
-                  <Inp key={k} label={label} value={lc[k] ?? cityDef[k]} onChange={v => upLC(k, v)} min={0} step={1} dollar
-                    note={lc[k] !== cityDef[k] ? `Default: $${cityDef[k]}` : ""} />
-                ))}
-              </div>
-              <div className="flex justify-between items-center p-2 rounded text-sm" style={{ backgroundColor: C.cyan }}>
-                <span className="font-medium" style={{ color: C.navy }}>Total Weekly</span>
-                <span className="font-mono font-semibold" style={{ color: C.navy }}>${lcTotal.toLocaleString()}/wk</span>
-              </div>
-              <div className="flex justify-between items-center mt-1 text-xs text-gray-500">
-                <span>Annual (×52)</span><span className="font-mono">{fmt(cityAnnual)}</span>
-              </div>
-            </Section>
             <Section title="Tuition Fees">
               <PinkNote>
                 More information about tuition fees and the HECS scheme is available{" "}
@@ -666,7 +672,7 @@ export default function App() {
               </div>
             </Section>
             <Section title="HECS-HELP Repayment">
-              <PinkNote>These rates are set by the Australian Government and are not editable. More information is available at <a href="https://www.ato.gov.au/individuals-and-families/study-and-training-support-loans/repaying-your-loan" target="_blank" rel="noopener noreferrer" style={{ color: C.navy, textDecoration: "underline" }}>ato.gov.au</a>.</PinkNote>
+              <PinkNote>These rates are set by the Australian Government and are not editable. More information is available at <a href="https://www.studyassist.gov.au/financial-and-study-support/hecs-help" target="_blank" rel="noopener noreferrer" style={{ color: C.navy, textDecoration: "underline" }}>studyassist.gov.au</a>.</PinkNote>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <Inp label="Threshold" value={a.hecsThreshold} onChange={() => {}} step={1000} dollar disabled />
                 <Inp label="Rate 1 (above threshold)" value={a.hecsRate1} onChange={() => {}} step={0.01} disabled />
@@ -686,33 +692,14 @@ export default function App() {
                 <Inp label="Annual SSAF (deferred via SA-HELP)" value={a.ssafFee} onChange={v => upA("ssafFee", v)} step={1} dollar note="Added to HELP debt each study year" />
               </div>
             </Section>
-            <Section title="Tax Brackets (2025-26)">
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead><tr style={{ backgroundColor: C.cyan }}>
-                    <th className="text-left p-2">From</th><th className="text-left p-2">To</th><th className="text-left p-2">Rate</th>
-                  </tr></thead>
-                  <tbody>{a.taxBrackets.map(([lo, hi, r], i) => (
-                    <tr key={i} style={{ borderBottom: "1px solid #f3f4f6" }}>
-                      <td className="p-2 font-mono">{fmt(lo)}</td>
-                      <td className="p-2 font-mono">{hi === Infinity ? "+" : fmt(hi)}</td>
-                      <td className="p-2">{(r * 100).toFixed(0)}%</td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              </div>
-            </Section>
+            {/* Tax brackets hidden - data retained in model */}
             <Section title="Growth Rates">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <Inp label="Wage Growth (annual)" value={a.wageGrowth} onChange={v => upA("wageGrowth", v)} step={0.01} note="0.03 = 3%" />
                 <Inp label="Inflation (annual)" value={a.inflation} onChange={v => upA("inflation", v)} step={0.01} note="Applied to living costs & tuition fees" />
               </div>
             </Section>
-            <Section title="Model Settings">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <Inp label="Total Model Years" value={a.totalYears} onChange={v => upA("totalYears", v)} min={p.studyYears + 1} max={20} />
-              </div>
-            </Section>
+            {/* Model settings hidden - data retained in model */}
           </div>
         )}
 
@@ -724,7 +711,8 @@ export default function App() {
               The income and expense assumptions on the previous page may create a monetary shortfall in your budget. This page provides some funding options for you to consider to bridge any gap between income and expenses.
             </p>
             <div className="mb-5 p-3 rounded" style={{ backgroundColor: "#f9fafb", border: "1px solid #e5e7eb" }}>
-              <h4 className="text-xs font-semibold uppercase mb-2" style={{ color: C.navy }}>Annual Cashflow Gap (before financing)</h4>
+              <h4 className="text-xs font-semibold uppercase mb-2" style={{ color: C.navy }}>Annual Cashflow Gap (Before Financing)</h4>
+              <p className="text-xs text-gray-500 mb-3">Based on the assumptions on the previous page the gap between your expected income sources and your expenditure in each of your study years is as follows:</p>
               <div className="flex gap-3 flex-wrap">
                 {allPeriods.filter(p => !p.isHalf && p.isStudy).map(pr => (
                   <div key={pr.id} className="text-center px-3 py-1.5 rounded" style={{ backgroundColor: pr.netCashflow < 0 ? "#fef2f2" : C.cyan }}>
@@ -734,6 +722,7 @@ export default function App() {
                 ))}
               </div>
             </div>
+            <PinkNote>If you have a funding gap, you may need a loan to defer these costs until you complete your studies and start working full time. You may consider either/or both of the SSL or Refugee Student loans below.</PinkNote>
             <Section title="Student Start-up Loan (SSL)">
               <PinkNote>Government loan of {fmt(SSL_PER_PERIOD)} per semester ({fmt(SSL_ANNUAL)}/yr). Added to your HELP debt and repaid via compulsory HECS repayments after your HECS balance is cleared.</PinkNote>
               <div className="flex gap-3 flex-wrap">
@@ -745,8 +734,8 @@ export default function App() {
                 ))}
               </div>
             </Section>
-            <Section title="Spark Private Loan">
-              <PinkNote>Private loan up to {fmt(SPARK_MAX_AMT)}/year during study. {(SPARK_RATE * 100).toFixed(0)}% interest, {(SPARK_FEE_RATE * 100).toFixed(0)}% admin fee. Interest accrues during study (grace period), repaid over {SPARK_REPAY_YEARS} years post-study.</PinkNote>
+            <Section title="Refugee Student Loan Program">
+              <PinkNote>The Refugee Student Loan Program has been developed by Skill Path for students in the RSSP. It is administered by Spark Finance. These loans are for up to {fmt(SPARK_MAX_AMT)}/year during study. They have a {(SPARK_RATE * 100).toFixed(0)}% interest rate and a 7 year term with no repayment required until after you complete your course.</PinkNote>
               <div className="flex gap-3 flex-wrap mb-3">
                 {[0, 1, 2].map(i => (
                   <div key={i} className="p-3 rounded" style={{ backgroundColor: sparkDD[i] && i < p.studyYears ? "#f0fdf4" : "#f9fafb", border: `1px solid ${sparkDD[i] && i < p.studyYears ? C.teal : "#e5e7eb"}`, opacity: i >= p.studyYears ? 0.4 : 1 }}>
@@ -769,7 +758,7 @@ export default function App() {
               </div>
               {sparkSummary && (
                 <div className="p-4 rounded-lg" style={{ backgroundColor: "#f8fafc", border: `1px solid ${C.navy}20` }}>
-                  <h4 className="text-xs font-bold uppercase mb-2" style={{ color: C.navy }}>Spark Loan Summary</h4>
+                  <h4 className="text-xs font-bold uppercase mb-2" style={{ color: C.navy }}>Refugee Student Loan Summary</h4>
                   <div className="space-y-1">
                     {[
                       ["Total Drawn", fmt(sparkSummary.drawn)],
@@ -799,7 +788,7 @@ export default function App() {
           <div className="bg-white rounded-lg border" style={{ borderColor: "#e5e7eb" }}>
             <div className="p-4 border-b" style={{ borderColor: "#e5e7eb" }}>
               <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold" style={{ color: C.navy }}>Annual Cashflows — {p.uni} ({city})</h2>
+                <h2 className="text-sm font-semibold" style={{ color: C.navy }}>Annual Cashflows</h2>
                 <label className="flex items-center gap-2 text-xs cursor-pointer" style={{ color: C.navy }}>
                   <input type="checkbox" checked={showY1Split} onChange={e => setShowY1Split(e.target.checked)} style={{ accentColor: C.teal }} />
                   Show Year 1 half-year split
@@ -921,8 +910,8 @@ export default function App() {
                         <>
                           <h4 className="font-semibold uppercase mt-3 mb-1" style={{ color: C.navy }}>Financing</h4>
                           {pr.sslDrawdown > 0 && <div>SSL drawdown: {fmt(pr.sslDrawdown)}</div>}
-                          {pr.sparkDrawdown > 0 && <div>Spark drawdown: {fmt(pr.sparkDrawdown)}</div>}
-                          {pr.sparkRepay > 0 && <div>Spark repayment: {fmt(-pr.sparkRepay)}</div>}
+                          {pr.sparkDrawdown > 0 && <div>Refugee Student Loan drawdown: {fmt(pr.sparkDrawdown)}</div>}
+                          {pr.sparkRepay > 0 && <div>Refugee Student Loan repayment: {fmt(-pr.sparkRepay)}</div>}
                           {pr.sslRepay > 0 && <div>SSL repayment: {fmt(-pr.sslRepay)}</div>}
                           <div className="font-semibold">Net financing: {fmt(pr.netFinancing)}</div>
                         </>
